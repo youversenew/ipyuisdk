@@ -1,21 +1,21 @@
 // =============================================================================
 // FILE: lib/main.dart
 // SYSTEM: IPYUI UNIVERSAL ENGINE (ULTIMATE EDITION)
-// VERSION: 6.0.0-STABLE
-// CHANGES: Fixed Material/Fluent conflicts using import prefixes
+// VERSION: 10.0.0-FINAL
+// DESCRIPTION: The bridge between Python and Flutter with all bells and whistles.
 // =============================================================================
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-// --- FLUTTER CORE & MATERIAL ---
+// --- FLUTTER CORE ---
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/cupertino.dart'; // Cupertino
+import 'package:flutter/cupertino.dart';
 
-// --- FLUENT UI (PREFIXED TO AVOID CONFLICTS) ---
+// --- UI SYSTEMS (Fluent aliased to avoid conflicts) ---
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 
 // --- PACKAGES ---
@@ -24,15 +24,17 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:lottie/lottie.dart'; // For loading screen
 
 // --- LOCAL MODULES ---
 import 'utils.dart';
+import 'performance.dart';
 import 'renderers/material_renderer.dart';
 import 'renderers/cupertino_renderer.dart';
 import 'renderers/fluent_renderer.dart';
 
 // =============================================================================
-// 1. BOOTSTRAP
+// 1. BOOTSTRAP & CRASH GUARD
 // =============================================================================
 
 void main() async {
@@ -43,14 +45,15 @@ void main() async {
     if (!kIsWeb &&
         (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
       await windowManager.ensureInitialized();
+
       WindowOptions windowOptions = const WindowOptions(
         size: Size(1280, 800),
         center: true,
         backgroundColor: Colors.transparent,
         skipTaskbar: false,
-        titleBarStyle:
-            TitleBarStyle.hidden, // Default hidden, managed by Config
+        titleBarStyle: TitleBarStyle.hidden, // Controlled dynamically later
       );
+
       await windowManager.waitUntilReadyToShow(windowOptions, () async {
         await windowManager.show();
         await windowManager.focus();
@@ -60,12 +63,12 @@ void main() async {
     runApp(const IpyRoot());
   }, (error, stack) {
     Logger.instance.add("CRASH: $error", LogType.error);
-    debugPrint("CRASH: $error");
+    debugPrint("🔥 FATAL ERROR: $error");
   });
 }
 
 // =============================================================================
-// 2. ROOT & ENGINE PROVIDER
+// 2. ROOT CONFIGURATION & THEME MANAGER
 // =============================================================================
 
 class IpyRoot extends StatefulWidget {
@@ -81,7 +84,8 @@ class _IpyRootState extends State<IpyRoot> {
   void initState() {
     super.initState();
     _engine.init(this);
-    // DartP ga theme o'zgartirish funksiyasini beramiz
+
+    // Allow DartP to switch themes dynamically
     DartP.instance.changeTheme = (mode) {
       setState(() => _engine.themeMode = mode);
     };
@@ -105,9 +109,8 @@ class _IpyRootState extends State<IpyRoot> {
         Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue;
     final String fontName = _engine.config['font'] ?? 'Roboto';
 
-    // 🪟 1. FLUENT UI (WINDOWS STYLE)
+    // 🪟 1. FLUENT UI (Windows Style)
     if (mode == 'fluent') {
-      // Material Rangi Fluent AccentColor ga o'giramiz
       final accent = fluent.AccentColor.swatch({
         'normal': seedColor,
         'dark': seedColor,
@@ -123,14 +126,12 @@ class _IpyRootState extends State<IpyRoot> {
         themeMode: _engine.themeMode == ThemeMode.dark
             ? fluent.ThemeMode.dark
             : fluent.ThemeMode.light,
-        // Yochiq mavzu
         theme: fluent.FluentThemeData(
           accentColor: accent,
           brightness: Brightness.light,
           visualDensity: fluent.VisualDensity.standard,
           fontFamily: GoogleFonts.getFont(fontName).fontFamily,
         ),
-        // Qorong'u mavzu
         darkTheme: fluent.FluentThemeData(
           accentColor: accent,
           brightness: Brightness.dark,
@@ -141,7 +142,7 @@ class _IpyRootState extends State<IpyRoot> {
       );
     }
 
-    // 🍎 2. CUPERTINO (iOS STYLE)
+    // 🍎 2. CUPERTINO (iOS Style)
     if (mode == 'cupertino') {
       return CupertinoApp(
         title: _engine.config['title'] ?? 'IPYUI iOS',
@@ -156,20 +157,18 @@ class _IpyRootState extends State<IpyRoot> {
       );
     }
 
-    // 🤖 3. MATERIAL (DEFAULT / ANDROID)
+    // 🤖 3. MATERIAL (Default)
     return MaterialApp(
       title: _engine.config['title'] ?? 'IPYUI App',
       debugShowCheckedModeBanner: false,
       themeMode: _engine.themeMode,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
+      theme: _buildTheme(Brightness.light, seedColor, fontName),
+      darkTheme: _buildTheme(Brightness.dark, seedColor, fontName),
       home: const IpyShell(),
     );
   }
 
-  ThemeData _buildTheme(Brightness brightness) {
-    final seed = Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue;
-    final font = _engine.config['font'] ?? 'Roboto';
+  ThemeData _buildTheme(Brightness brightness, Color seed, String font) {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
@@ -194,7 +193,7 @@ class EngineInherited extends InheritedWidget {
 }
 
 // =============================================================================
-// 3. APP SHELL (WINDOW & DEVTOOLS)
+// 3. APP SHELL (WINDOW, KEYBOARD & LAYOUT)
 // =============================================================================
 
 class IpyShell extends StatefulWidget {
@@ -246,17 +245,19 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
           children: [
             Column(
               children: [
-                // 1. Custom Title Bar (Controlled by config)
+                // 1. Custom Title Bar (Controlled by Config)
                 if (_engine.config['title_bar'] != 'native')
                   _buildCustomTitleBar(),
 
-                // 2. Main Renderer
+                // 2. Main Renderer (With Performance Boundary)
                 Expanded(
-                  child: _engine.isConnected && _engine.rootNode != null
-                      ? UniversalBridge(
-                          node: _engine.rootNode!,
-                          mode: _engine.config['ui_mode'])
-                      : const ConnectionScreen(),
+                  child: RepaintBoundary(
+                    child: _engine.isConnected && _engine.rootNode != null
+                        ? UniversalBridge(
+                            node: _engine.rootNode!,
+                            mode: _engine.config['ui_mode'])
+                        : const ConnectionScreen(),
+                  ),
                 ),
               ],
             ),
@@ -298,6 +299,7 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
                   color: isDark ? Colors.white70 : Colors.black87),
             ),
             const Spacer(),
+            // Only show controls on non-macOS platforms usually, or mimic macOS
             if (!Platform.isMacOS) ...[
               _WinBtn(Icons.remove, windowManager.minimize),
               _WinBtn(Icons.check_box_outline_blank, windowManager.maximize),
@@ -331,7 +333,7 @@ class _WinBtn extends StatelessWidget {
 }
 
 // =============================================================================
-// 4. ENGINE CORE (Logic)
+// 4. ENGINE CORE (LOGIC, WEBSOCKET, STATE)
 // =============================================================================
 
 class Engine {
@@ -391,14 +393,29 @@ class Engine {
       final data = jsonDecode(msg);
       final type = data['type'];
 
+      // --- FULL UPDATE ---
       if (type == 'update') {
         rootNode = data['tree'];
+        // Index for Performance Patching
+        PerformanceManager.instance.indexTree(rootNode!);
         _rootState?.rebuild();
-      } else if (type == 'config') {
+      }
+
+      // --- PATCH UPDATE (Optimization) ---
+      else if (type == 'patch') {
+        final String id = data['id'];
+        final Map<String, dynamic> updates = data['updates'];
+        final success = PerformanceManager.instance.applyPatch(id, updates);
+        if (success) _rootState?.rebuild();
+      }
+
+      // --- CONFIGURATION ---
+      else if (type == 'config') {
         config.addAll(data);
         themeMode =
             config['theme'] == 'dark' ? ThemeMode.dark : ThemeMode.light;
 
+        // Handle TitleBar Switching
         if (config['title_bar'] == 'native') {
           windowManager.setTitleBarStyle(TitleBarStyle.normal);
         } else {
@@ -407,9 +424,15 @@ class Engine {
 
         Logger.instance.add("Config Updated", LogType.info);
         _rootState?.rebuild();
-      } else if (type == 'plugin') {
-        _handlePlugin(data['plugin_name'], data['data']);
-      } else if (type == 'dartp') {
+      }
+
+      // --- NATIVE PLUGINS ---
+      else if (type == 'plugin') {
+        PluginRegistry.handle(data['plugin_name'], data['data'], this);
+      }
+
+      // --- DARTP ---
+      else if (type == 'dartp') {
         DartP.instance.execute(data['code']);
       }
     } catch (e) {
@@ -423,14 +446,60 @@ class Engine {
           {"type": "event", "id": id, "handler": handler, "value": value}));
     }
   }
+}
 
-  void _handlePlugin(String name, Map data) async {
+// =============================================================================
+// 5. UNIVERSAL BRIDGE (RENDERER ROUTER)
+// =============================================================================
+
+class UniversalBridge extends StatelessWidget {
+  final Map<String, dynamic> node;
+  final String? mode;
+
+  const UniversalBridge({super.key, required this.node, this.mode});
+
+  @override
+  Widget build(BuildContext context) {
+    final engine = EngineInherited.of(context);
+
+    // --- LAZY LOADING CHECK ---
+    if (node['type'] == 'listview' && node['props']?['lazy'] == true) {
+      return NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (PerformanceManager.instance.shouldLoadMore(notification)) {
+            engine.send(node['id'], 'scroll_end', null);
+          }
+          return false;
+        },
+        child: _routeRenderer(engine),
+      );
+    }
+
+    return _routeRenderer(engine);
+  }
+
+  Widget _routeRenderer(Engine engine) {
+    if (mode == 'fluent') {
+      return FluentRenderer.build(node, engine.send);
+    } else if (mode == 'cupertino') {
+      return CupertinoRenderer.build(node, engine.send);
+    } else {
+      return MaterialRenderer.build(node, engine.send);
+    }
+  }
+}
+
+// =============================================================================
+// 6. PLUGIN REGISTRY (NATIVE FEATURES)
+// =============================================================================
+
+class PluginRegistry {
+  static void handle(String name, Map data, Engine engine) async {
     Logger.instance.add("Plugin: $name", LogType.system);
-    final ctx = _ctx;
+    final ctx = engine._ctx;
     if (ctx == null) return;
 
     try {
-      // NOTE: showDialog here uses Material (default) because we aliased fluent.
       if (name == 'toast') {
         ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
           content: Text(data['message']),
@@ -450,6 +519,9 @@ class Engine {
                 ));
       } else if (name == 'launcher') {
         launchUrl(Uri.parse(data['url']));
+      } else if (name == 'vibrate') {
+        // Requires vibration package in pubspec
+        // if (await Vibration.hasVibrator()) Vibration.vibrate();
       }
     } catch (e) {
       Logger.instance.add("Plugin Error: $e", LogType.error);
@@ -458,38 +530,7 @@ class Engine {
 }
 
 // =============================================================================
-// 5. UNIVERSAL BRIDGE (RENDERER ROUTER)
-// =============================================================================
-
-class UniversalBridge extends StatelessWidget {
-  final Map<String, dynamic> node;
-  final String? mode;
-
-  const UniversalBridge({super.key, required this.node, this.mode});
-
-  @override
-  Widget build(BuildContext context) {
-    final engine = EngineInherited.of(context);
-
-    // 🪟 FLUENT RENDERER
-    if (mode == 'fluent') {
-      return FluentRenderer.build(node, engine.send);
-    }
-
-    // 🍎 CUPERTINO RENDERER
-    else if (mode == 'cupertino') {
-      return CupertinoRenderer.build(node, engine.send);
-    }
-
-    // 🤖 MATERIAL RENDERER (Default)
-    else {
-      return MaterialRenderer.build(node, engine.send);
-    }
-  }
-}
-
-// =============================================================================
-// 6. DEVTOOLS OVERLAY (ADVANCED)
+// 7. DEVTOOLS OVERLAY (F12 CONSOLE)
 // =============================================================================
 
 class DevToolsOverlay extends StatefulWidget {
@@ -510,7 +551,6 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
   @override
   void initState() {
     super.initState();
-    // Material TabController works because we aliased fluent
     _tabController = TabController(length: 3, vsync: this);
   }
 
@@ -545,7 +585,6 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
                                 fontWeight: FontWeight.bold)),
                         const SizedBox(width: 20),
                         Expanded(
-                          // Using Material TabBar
                           child: TabBar(
                             controller: _tabController,
                             isScrollable: true,
@@ -553,13 +592,12 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
                             unselectedLabelColor: Colors.grey,
                             indicatorColor: Colors.blueAccent,
                             tabs: const [
-                              Tab(text: "CONSOLE & LOGS"),
+                              Tab(text: "CONSOLE"),
                               Tab(text: "INSPECTOR"),
                               Tab(text: "NETWORK"),
                             ],
                           ),
                         ),
-                        // Using Material IconButton
                         IconButton(
                             icon: const Icon(Icons.save,
                                 color: Colors.grey, size: 18),
@@ -593,7 +631,6 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
     );
   }
 
-  // --- TAB 1: CONSOLE ---
   Widget _buildConsole() {
     return Column(
       children: [
@@ -639,7 +676,7 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
                 border: InputBorder.none,
                 prefixText: ">>> ",
                 prefixStyle: TextStyle(color: Colors.green),
-                hintText: "Enter command (help, debug, theme...)",
+                hintText: "Enter command...",
                 hintStyle: TextStyle(color: Colors.white24)),
             onSubmitted: _runCommand,
           ),
@@ -648,7 +685,6 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
     );
   }
 
-  // --- TAB 2: INSPECTOR ---
   Widget _buildInspector() {
     final root = widget.engine.rootNode;
     if (root == null)
@@ -668,7 +704,6 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
     );
   }
 
-  // --- TAB 3: NETWORK ---
   Widget _buildNetwork() {
     return Center(
       child: Column(
@@ -689,49 +724,30 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
     );
   }
 
-  // --- CLI LOGIC ---
   void _runCommand(String cmd) {
     _cmdCtrl.clear();
     Logger.instance.add("CMD: $cmd", LogType.cli);
-
     final parts = cmd.split(' ');
-    final action = parts[0].toLowerCase();
 
-    switch (action) {
-      case 'help':
-        Logger.instance.add(
-            "Commands: help, clear, theme [light|dark], titlebar [native|custom], get ui",
-            LogType.info);
-        break;
-      case 'clear':
-        Logger.instance.clear();
-        break;
-      case 'theme':
-        if (parts.length > 1) {
-          if (parts[1] == 'dark')
-            DartP.instance.execute("Theme.dark()");
-          else
-            DartP.instance.execute("Theme.light()");
-        }
-        break;
-      case 'get':
-        if (parts.length > 1 && parts[1] == 'ui') {
-          _tabController.animateTo(1);
-        }
-        break;
-      default:
-        Logger.instance.add("Unknown command. Try 'help'.", LogType.error);
+    if (parts[0] == 'theme') {
+      if (parts.length > 1 && parts[1] == 'dark')
+        DartP.instance.execute("Theme.dark()");
+      else
+        DartP.instance.execute("Theme.light()");
+    } else if (parts[0] == 'clear') {
+      Logger.instance.clear();
+    } else {
+      Logger.instance.add("Unknown command", LogType.error);
     }
   }
 
   void _saveLogs() async {
     final content = Logger.instance.export();
     String? path = await FilePicker.platform
-        .saveFile(dialogTitle: "Save Logs", fileName: "ipyui_logs.txt");
+        .saveFile(dialogTitle: "Save Logs", fileName: "logs.txt");
     if (path != null) {
-      final file = File(path);
-      await file.writeAsString(content);
-      Logger.instance.add("Logs saved to $path", LogType.system);
+      await File(path).writeAsString(content);
+      Logger.instance.add("Saved to $path", LogType.system);
     }
   }
 }
@@ -739,6 +755,18 @@ class _DevToolsOverlayState extends State<DevToolsOverlay>
 class ConnectionScreen extends StatelessWidget {
   const ConnectionScreen({super.key});
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: CircularProgressIndicator());
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Using Lottie if available, else Circular
+          const CircularProgressIndicator(),
+          const SizedBox(height: 20),
+          const Text("Waiting for Python Engine...",
+              style: TextStyle(color: Colors.grey)),
+        ],
+      ),
+    );
+  }
 }
