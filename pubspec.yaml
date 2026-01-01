@@ -14,29 +14,26 @@ dependencies:
   web_socket_channel: ^3.0.3
   macos_ui: ^2.2.0
   cupertino_icons: ^1.0.8
-  provider: ^6.1.5
+  window_manager: ^0.3.9
+  provider: ^6.1.1
+  # UI & Assets
+  flutter_svg: ^2.0.10
+  lottie: ^3.1.0        # Animatsiyalar uchun
   google_fonts: ^6.1.0
-  http: ^1.1.0
-  connectivity_plus: ^5.0.0 # To detect network changes
-
-  flutter_svg: ^2.0.9 # For custom SVG icons/favicons
-
-  # --- Desktop Window Management (Custom Title Bar) ---
-  window_manager: ^0.3.8 # Resize, Move, Hide Titlebar
-  screen_retriever: ^0.1.9
-
-  # --- Plugins (The 15+ Native Features) ---
-  url_launcher: ^6.2.4
+  flutter_blurhash: ^0.8.2
+  cached_network_image: ^3.3.1 # Rasmlar keshlanishi uchun
+  # Native Capabilities
+  url_launcher: ^6.2.5
   shared_preferences: ^2.2.2
   image_picker: ^1.0.7
-  file_picker: ^6.1.1
-  geolocator: ^11.0.0
   vibration: ^1.8.4
-  path_provider: ^2.1.2
-  permission_handler: ^11.3.0
-  
-  # --- Advanced ---
-  device_info_plus: ^9.1.2 # For identifying OS to Python
+  file_picker: ^6.1.1
+  geolocator: ^11.0.0   # GPS
+  device_info_plus: ^9.1.2
+  video_player: ^2.8.6  # Video
+  chewie: ^1.8.1        # Video UI
+  audioplayers: ^6.0.0  # Audio
+  webview_flutter: ^4.7.0 # Web Browser ichida
   
 
 dev_dependencies:
