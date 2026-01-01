@@ -1,94 +1,75 @@
 // =============================================================================
 // FILE: lib/main.dart
-// PROJECT: IPYUI UNIVERSAL RUNTIME (GOD-MODE / BATTERIES INCLUDED)
-// VERSION: 10.0.0-ALPHA-OMEGA
-// AUTHOR: IPYUI ARCHITECT
-// DESC: Infinite Expandable, Templated, Python-Driven UI with Native Bridge
+// SYSTEM: IPYUI UNIVERSAL ENGINE (ULTIMATE EDITION)
+// VERSION: 6.0.0-STABLE
+// CHANGES: Fixed Material/Fluent conflicts using import prefixes
 // =============================================================================
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
-// Flutter Core
+// --- FLUTTER CORE & MATERIAL ---
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart'; // Cupertino
 
-// Packages
+// --- FLUENT UI (PREFIXED TO AVOID CONFLICTS) ---
+import 'package:fluent_ui/fluent_ui.dart' as fluent;
+
+// --- PACKAGES ---
 import 'package:window_manager/window_manager.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:lottie/lottie.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
-
-// Native Bridge Packages
 import 'package:url_launcher/url_launcher.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vibration/vibration.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:device_info_plus/device_info_plus.dart';
+
+// --- LOCAL MODULES ---
+import 'utils.dart';
+import 'renderers/material_renderer.dart';
+import 'renderers/cupertino_renderer.dart';
+import 'renderers/fluent_renderer.dart';
 
 // =============================================================================
-// 1. SYSTEM BOOTSTRAP & CRASH GUARD
+// 1. BOOTSTRAP
 // =============================================================================
 
 void main() async {
-  // Global Error Trap (No Red Screen of Death on Release)
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Configure Desktop Window
+    // Desktop Window Setup
     if (!kIsWeb &&
         (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
       await windowManager.ensureInitialized();
-
       WindowOptions windowOptions = const WindowOptions(
         size: Size(1280, 800),
         center: true,
         backgroundColor: Colors.transparent,
         skipTaskbar: false,
-        titleBarStyle: TitleBarStyle.hidden, // We render our own TitleBar
+        titleBarStyle:
+            TitleBarStyle.hidden, // Default hidden, managed by Config
       );
-
       await windowManager.waitUntilReadyToShow(windowOptions, () async {
         await windowManager.show();
         await windowManager.focus();
       });
     }
 
-    // Platform Specific Init
-    if (Platform.isAndroid) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        systemNavigationBarColor: Colors.transparent,
-      ));
-    }
-
     runApp(const IpyRoot());
   }, (error, stack) {
-    debugPrint("🔥 KERNEL PANIC: $error");
-    debugPrint(stack.toString());
+    Logger.instance.add("CRASH: $error", LogType.error);
+    debugPrint("CRASH: $error");
   });
 }
 
 // =============================================================================
-// 2. ROOT APPLICATION & THEME ENGINE
+// 2. ROOT & ENGINE PROVIDER
 // =============================================================================
 
 class IpyRoot extends StatefulWidget {
   const IpyRoot({super.key});
-
   @override
   State<IpyRoot> createState() => _IpyRootState();
 }
@@ -100,6 +81,10 @@ class _IpyRootState extends State<IpyRoot> {
   void initState() {
     super.initState();
     _engine.init(this);
+    // DartP ga theme o'zgartirish funksiyasini beramiz
+    DartP.instance.changeTheme = (mode) {
+      setState(() => _engine.themeMode = mode);
+    };
   }
 
   void rebuild() {
@@ -108,67 +93,112 @@ class _IpyRootState extends State<IpyRoot> {
 
   @override
   Widget build(BuildContext context) {
-    // Determine Font
-    final fontFamily =
-        GoogleFonts.getFont(_engine.config['font'] ?? 'Roboto').fontFamily;
-
-    return EngineProvider(
+    return EngineInherited(
       engine: _engine,
-      child: MaterialApp(
-        title: _engine.config['title'] ?? 'IPYUI Client',
+      child: _buildApp(),
+    );
+  }
+
+  Widget _buildApp() {
+    final String mode = _engine.config['ui_mode'] ?? 'material';
+    final Color seedColor =
+        Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue;
+    final String fontName = _engine.config['font'] ?? 'Roboto';
+
+    // 🪟 1. FLUENT UI (WINDOWS STYLE)
+    if (mode == 'fluent') {
+      // Material Rangi Fluent AccentColor ga o'giramiz
+      final accent = fluent.AccentColor.swatch({
+        'normal': seedColor,
+        'dark': seedColor,
+        'light': seedColor,
+        'darker': seedColor,
+        'lighter': seedColor,
+        'darkest': seedColor,
+      });
+
+      return fluent.FluentApp(
+        title: _engine.config['title'] ?? 'IPYUI Fluent',
         debugShowCheckedModeBanner: false,
-
-        // Theme Logic
-        themeMode: _engine.themeMode,
-
-        // Light Theme
-        theme: ThemeData(
-          useMaterial3: true,
+        themeMode: _engine.themeMode == ThemeMode.dark
+            ? fluent.ThemeMode.dark
+            : fluent.ThemeMode.light,
+        // Yochiq mavzu
+        theme: fluent.FluentThemeData(
+          accentColor: accent,
           brightness: Brightness.light,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor:
-                _Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue,
-            brightness: Brightness.light,
-          ),
-          scaffoldBackgroundColor: const Color(0xFFF5F5F5),
-          fontFamily: fontFamily,
+          visualDensity: fluent.VisualDensity.standard,
+          fontFamily: GoogleFonts.getFont(fontName).fontFamily,
         ),
-
-        // Dark Theme
-        darkTheme: ThemeData(
-          useMaterial3: true,
+        // Qorong'u mavzu
+        darkTheme: fluent.FluentThemeData(
+          accentColor: accent,
           brightness: Brightness.dark,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor:
-                _Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue,
-            brightness: Brightness.dark,
-          ),
-          scaffoldBackgroundColor: const Color(0xFF121212),
-          fontFamily: fontFamily,
+          visualDensity: fluent.VisualDensity.standard,
+          fontFamily: GoogleFonts.getFont(fontName).fontFamily,
         ),
-
         home: const IpyShell(),
-      ),
+      );
+    }
+
+    // 🍎 2. CUPERTINO (iOS STYLE)
+    if (mode == 'cupertino') {
+      return CupertinoApp(
+        title: _engine.config['title'] ?? 'IPYUI iOS',
+        debugShowCheckedModeBanner: false,
+        theme: CupertinoThemeData(
+          brightness: _engine.themeMode == ThemeMode.dark
+              ? Brightness.dark
+              : Brightness.light,
+          primaryColor: seedColor,
+        ),
+        home: const IpyShell(),
+      );
+    }
+
+    // 🤖 3. MATERIAL (DEFAULT / ANDROID)
+    return MaterialApp(
+      title: _engine.config['title'] ?? 'IPYUI App',
+      debugShowCheckedModeBanner: false,
+      themeMode: _engine.themeMode,
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      home: const IpyShell(),
+    );
+  }
+
+  ThemeData _buildTheme(Brightness brightness) {
+    final seed = Utils.parseColor(_engine.config['seed_color']) ?? Colors.blue;
+    final font = _engine.config['font'] ?? 'Roboto';
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme:
+          ColorScheme.fromSeed(seedColor: seed, brightness: brightness),
+      fontFamily: GoogleFonts.getFont(font).fontFamily,
+      scaffoldBackgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF121212)
+          : const Color(0xFFF5F5F5),
     );
   }
 }
 
-class EngineProvider extends InheritedWidget {
+class EngineInherited extends InheritedWidget {
   final Engine engine;
-  const EngineProvider({super.key, required this.engine, required super.child});
+  const EngineInherited(
+      {super.key, required this.engine, required super.child});
   static Engine of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<EngineProvider>()!.engine;
+      context.dependOnInheritedWidgetOfExactType<EngineInherited>()!.engine;
   @override
-  bool updateShouldNotify(EngineProvider old) => false;
+  bool updateShouldNotify(EngineInherited old) => false;
 }
 
 // =============================================================================
-// 3. APP SHELL (WINDOW MANAGER & DEVTOOLS HOST)
+// 3. APP SHELL (WINDOW & DEVTOOLS)
 // =============================================================================
 
 class IpyShell extends StatefulWidget {
   const IpyShell({super.key});
-
   @override
   State<IpyShell> createState() => _IpyShellState();
 }
@@ -176,14 +206,19 @@ class IpyShell extends StatefulWidget {
 class _IpyShellState extends State<IpyShell> with WindowListener {
   late Engine _engine;
   bool _showDevTools = false;
-  bool _inspectMode = false;
   final FocusNode _keyboardNode = FocusNode();
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _engine = EngineProvider.of(context);
+    _engine = EngineInherited.of(context);
     _engine.setContext(context);
+
+    // Bind DartP DevTools Toggle
+    DartP.instance.toggleDevTools = () {
+      setState(() => _showDevTools = !_showDevTools);
+    };
+
     windowManager.addListener(this);
   }
 
@@ -195,15 +230,8 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
   }
 
   @override
-  void onWindowClose() async {
-    _engine.send("window", "close_request", null);
-    // Give Python 100ms to save state or deny close
-    await Future.delayed(const Duration(milliseconds: 100));
-    super.onWindowClose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    // Keyboard Listener for F12
     return RawKeyboardListener(
       focusNode: _keyboardNode,
       autofocus: true,
@@ -218,39 +246,36 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
           children: [
             Column(
               children: [
-                // 1. Custom Title Bar (Conditional)
-                if (_engine.config['title_bar'] != 'none') _buildTitleBar(),
+                // 1. Custom Title Bar (Controlled by config)
+                if (_engine.config['title_bar'] != 'native')
+                  _buildCustomTitleBar(),
 
-                // 2. Main Viewport
+                // 2. Main Renderer
                 Expanded(
                   child: _engine.isConnected && _engine.rootNode != null
-                      ? UniversalRenderer(
-                          node: _engine.rootNode!, inspectMode: _inspectMode)
+                      ? UniversalBridge(
+                          node: _engine.rootNode!,
+                          mode: _engine.config['ui_mode'])
                       : const ConnectionScreen(),
                 ),
               ],
             ),
 
-            // 3. Overlays
+            // 3. DevTools Overlay
             if (_showDevTools)
               Positioned.fill(
                 child: DevToolsOverlay(
                   engine: _engine,
-                  inspectMode: _inspectMode,
-                  onToggleInspect: () =>
-                      setState(() => _inspectMode = !_inspectMode),
                   onClose: () => setState(() => _showDevTools = false),
                 ),
               ),
-
-            // 4. Toast/Notification Area (could be added here)
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTitleBar() {
+  Widget _buildCustomTitleBar() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       height: 35,
@@ -263,20 +288,20 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
             if (_engine.config['icon'] != null)
               Image.network(_engine.config['icon'], width: 16, height: 16)
             else
-              const Icon(Icons.grid_view_rounded, size: 16),
+              const Icon(Icons.widgets, size: 16, color: Colors.grey),
             const SizedBox(width: 10),
             Text(
-              _engine.config['title'] ?? 'IPYUI App',
+              _engine.config['title'] ?? 'IPYUI',
               style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.bold,
                   color: isDark ? Colors.white70 : Colors.black87),
             ),
             const Spacer(),
             if (!Platform.isMacOS) ...[
-              _WindowBtn(Icons.remove, windowManager.minimize),
-              _WindowBtn(Icons.crop_square, windowManager.maximize),
-              _WindowBtn(Icons.close, windowManager.close, isDanger: true),
+              _WinBtn(Icons.remove, windowManager.minimize),
+              _WinBtn(Icons.check_box_outline_blank, windowManager.maximize),
+              _WinBtn(Icons.close, windowManager.close, isDanger: true),
             ]
           ],
         ),
@@ -285,11 +310,11 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
   }
 }
 
-class _WindowBtn extends StatelessWidget {
+class _WinBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback cb;
   final bool isDanger;
-  const _WindowBtn(this.icon, this.cb, {this.isDanger = false});
+  const _WinBtn(this.icon, this.cb, {this.isDanger = false});
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -298,14 +323,15 @@ class _WindowBtn extends StatelessWidget {
         width: 45,
         height: 35,
         alignment: Alignment.center,
-        child: Icon(icon, size: 14, color: isDanger ? Colors.white : null),
+        child:
+            Icon(icon, size: 14, color: isDanger ? Colors.white : Colors.grey),
       ),
     );
   }
 }
 
 // =============================================================================
-// 4. THE ENGINE (LOGIC CORE & TEMPLATE REGISTRY)
+// 4. ENGINE CORE (Logic)
 // =============================================================================
 
 class Engine {
@@ -315,45 +341,39 @@ class Engine {
   BuildContext? _ctx;
   WebSocketChannel? _ws;
 
-  // State
   bool isConnected = false;
   Map<String, dynamic>? rootNode;
-  Map<String, dynamic> config = {'title': 'IPYUI', 'theme': 'light'};
+  Map<String, dynamic> config = {
+    'title': 'IPYUI',
+    'theme': 'light',
+    'title_bar': 'custom',
+    'ui_mode': 'material',
+    'seed_color': '#2196F3'
+  };
   ThemeMode themeMode = ThemeMode.light;
-
-  // LOGS & DEBUG
-  List<String> logs = [];
-  Map<String, dynamic>? inspectedNode;
-
-  // TEMPLATE REGISTRY (The "Extension" System)
-  // Allows loading "compiled" widget trees once and reusing them by type
-  final Map<String, Map<String, dynamic>> _templates = {};
 
   void init(_IpyRootState state) {
     _rootState = state;
     _connect();
   }
 
-  void setContext(BuildContext ctx) => _ctx = ctx;
-
-  void log(String msg, {String type = "INFO"}) {
-    final t = "${DateTime.now().minute}:${DateTime.now().second}";
-    logs.add("[$t] [$type] $msg");
-    if (logs.length > 500) logs.removeAt(0);
+  void setContext(BuildContext ctx) {
+    _ctx = ctx;
+    DartP.instance.setContext(ctx);
   }
 
   void _connect() {
-    log("Connecting to $_url...", type: "NET");
+    Logger.instance.add("Connecting to $_url...", LogType.network);
     try {
       _ws = WebSocketChannel.connect(Uri.parse(_url));
       _ws!.stream.listen(
-        _onMessage,
+        _onMsg,
         onDone: _onDisconnect,
         onError: (e) => _onDisconnect(),
       );
       isConnected = true;
+      Logger.instance.add("Connected to Kernel", LogType.network);
       _rootState?.rebuild();
-      log("Connected to Kernel", type: "NET");
     } catch (e) {
       _onDisconnect();
     }
@@ -361,47 +381,39 @@ class Engine {
 
   void _onDisconnect() {
     isConnected = false;
-    log("Disconnected. Reconnecting...", type: "NET");
+    Logger.instance.add("Disconnected. Retrying in 3s...", LogType.network);
     _rootState?.rebuild();
     Future.delayed(const Duration(seconds: 3), _connect);
   }
 
-  void _onMessage(dynamic msg) {
+  void _onMsg(dynamic msg) {
     try {
       final data = jsonDecode(msg);
       final type = data['type'];
 
-      switch (type) {
-        case 'update':
-          rootNode = data['tree'];
-          _rootState?.rebuild();
-          break;
+      if (type == 'update') {
+        rootNode = data['tree'];
+        _rootState?.rebuild();
+      } else if (type == 'config') {
+        config.addAll(data);
+        themeMode =
+            config['theme'] == 'dark' ? ThemeMode.dark : ThemeMode.light;
 
-        case 'config':
-          config.addAll(data);
-          themeMode =
-              config['theme'] == 'dark' ? ThemeMode.dark : ThemeMode.light;
-          _rootState?.rebuild();
-          break;
+        if (config['title_bar'] == 'native') {
+          windowManager.setTitleBarStyle(TitleBarStyle.normal);
+        } else {
+          windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+        }
 
-        case 'register_template':
-          // Registers a reusable component (The "Library" feature)
-          final name = data['name'];
-          final template = data['template'];
-          _templates[name] = template;
-          log("Registered Template: $name", type: "SYS");
-          break;
-
-        case 'plugin':
-          PluginRegistry.handle(data['plugin_name'], data['data'], this);
-          break;
-
-        case 'dartp':
-          DartP.exec(data['code'], _ctx);
-          break;
+        Logger.instance.add("Config Updated", LogType.info);
+        _rootState?.rebuild();
+      } else if (type == 'plugin') {
+        _handlePlugin(data['plugin_name'], data['data']);
+      } else if (type == 'dartp') {
+        DartP.instance.execute(data['code']);
       }
     } catch (e) {
-      log("Protocol Error: $e", type: "ERR");
+      Logger.instance.add("Protocol Error: $e", LogType.error);
     }
   }
 
@@ -409,477 +421,98 @@ class Engine {
     if (_ws != null && isConnected) {
       _ws!.sink.add(jsonEncode(
           {"type": "event", "id": id, "handler": handler, "value": value}));
-      // log("Event: $handler -> $id", type: "OUT"); // Commented to reduce noise
     }
   }
 
-  /// Retrieves a template if the type matches a registered extension
-  Map<String, dynamic>? getTemplate(String type) => _templates[type];
-}
-
-// =============================================================================
-// 5. PLUGIN REGISTRY (BATTERIES INCLUDED)
-// =============================================================================
-
-class PluginRegistry {
-  static void handle(String name, Map data, Engine engine) async {
-    final ctx = engine._ctx;
+  void _handlePlugin(String name, Map data) async {
+    Logger.instance.add("Plugin: $name", LogType.system);
+    final ctx = _ctx;
     if (ctx == null) return;
-    engine.log("Plugin Call: $name", type: "PLUG");
 
     try {
-      switch (name) {
-        // UI FEEDBACK
-        case 'toast':
-          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-            content: Text(data['message']),
-            backgroundColor: _Utils.parseColor(data['color']),
-          ));
-          break;
-
-        case 'dialog':
-          showDialog(
-              context: ctx,
-              builder: (c) => AlertDialog(
-                    title: Text(data['title']),
-                    content: Text(data['content']),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(c),
-                          child: const Text("OK"))
-                    ],
-                  ));
-          break;
-
-        // SYSTEM
-        case 'launcher':
-          await launchUrl(Uri.parse(data['url']));
-          break;
-
-        case 'clipboard':
-          await Clipboard.setData(ClipboardData(text: data['text']));
-          break;
-
-        case 'vibrate':
-          if (await Vibration.hasVibrator() ?? false) {
-            Vibration.vibrate(duration: data['duration'] ?? 500);
-          }
-          break;
-
-        // I/O & SENSORS
-        case 'storage_set':
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(data['key'], data['value']);
-          break;
-
-        case 'storage_get':
-          final prefs = await SharedPreferences.getInstance();
-          final val = prefs.getString(data['key']);
-          engine.send(data['request_id'], 'result', val);
-          break;
-
-        case 'image_picker':
-          final picker = ImagePicker();
-          final img = await picker.pickImage(
-              source: data['source'] == 'camera'
-                  ? ImageSource.camera
-                  : ImageSource.gallery);
-          if (img != null) engine.send('system', 'image_picked', img.path);
-          break;
-
-        case 'geolocator':
-          LocationPermission permission = await Geolocator.checkPermission();
-          if (permission == LocationPermission.denied)
-            permission = await Geolocator.requestPermission();
-          if (permission == LocationPermission.whileInUse ||
-              permission == LocationPermission.always) {
-            Position pos = await Geolocator.getCurrentPosition();
-            engine.send(data['request_id'], 'result',
-                {'lat': pos.latitude, 'lng': pos.longitude});
-          }
-          break;
-
-        case 'device_info':
-          final info = DeviceInfoPlugin();
-          if (Platform.isWindows) {
-            final win = await info.windowsInfo;
-            engine.send(data['request_id'], 'result',
-                {'os': 'windows', 'computer': win.computerName});
-          }
-          // Add other platforms...
-          break;
+      // NOTE: showDialog here uses Material (default) because we aliased fluent.
+      if (name == 'toast') {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+          content: Text(data['message']),
+          backgroundColor: Utils.parseColor(data['color']),
+        ));
+      } else if (name == 'dialog') {
+        showDialog(
+            context: ctx,
+            builder: (c) => AlertDialog(
+                  title: Text(data['title']),
+                  content: Text(data['content']),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(c),
+                        child: const Text("OK"))
+                  ],
+                ));
+      } else if (name == 'launcher') {
+        launchUrl(Uri.parse(data['url']));
       }
     } catch (e) {
-      engine.log("Plugin Error: $e", type: "ERR");
+      Logger.instance.add("Plugin Error: $e", LogType.error);
     }
   }
 }
 
 // =============================================================================
-// 6. DARTP (DYNAMIC INTERPRETER)
+// 5. UNIVERSAL BRIDGE (RENDERER ROUTER)
 // =============================================================================
 
-class DartP {
-  static void exec(String code, BuildContext? context) {
-    if (context == null) return;
-    final cmd = code.trim();
-    print("DartP: $cmd");
-
-    try {
-      if (cmd == "Navigator.pop()") Navigator.pop(context);
-      if (cmd == "Window.minimize()") windowManager.minimize();
-      if (cmd == "Window.maximize()") windowManager.maximize();
-      if (cmd == "Window.close()") windowManager.close();
-      if (cmd == "System.exit()") exit(0);
-
-      // Advanced: Dynamic Scroll
-      // If we had a ScrollController registry, we could do "ScrollTo('list1', 500)"
-
-    } catch (e) {
-      print("DartP Error: $e");
-    }
-  }
-}
-
-// =============================================================================
-// 7. UNIVERSAL RENDERER (THE MASTER WIDGET)
-// =============================================================================
-
-class UniversalRenderer extends StatelessWidget {
+class UniversalBridge extends StatelessWidget {
   final Map<String, dynamic> node;
-  final bool inspectMode;
+  final String? mode;
 
-  const UniversalRenderer(
-      {super.key, required this.node, this.inspectMode = false});
+  const UniversalBridge({super.key, required this.node, this.mode});
 
   @override
   Widget build(BuildContext context) {
-    // 1. Template Resolution (The "Library" Feature)
-    // If this node is a reference to a registered template, swap it out.
-    final engine = EngineProvider.of(context);
-    Map<String, dynamic> effectiveNode = node;
+    final engine = EngineInherited.of(context);
 
-    if (engine.getTemplate(node['type']) != null) {
-      // It's a template instance!
-      // We take the template structure and merge current props on top.
-      final template = engine.getTemplate(node['type'])!;
-
-      // Deep copy to avoid mutating the original template registry
-      effectiveNode = jsonDecode(jsonEncode(template));
-
-      // Override ID
-      effectiveNode['id'] = node['id'];
-
-      // Override Props (Fixed: Explicit casting to Map to avoid Type Inference error)
-      if (node['props'] != null) {
-        final Map<String, dynamic> templateProps =
-            effectiveNode['props'] != null
-                ? Map<String, dynamic>.from(effectiveNode['props'])
-                : {};
-
-        final Map<String, dynamic> newProps =
-            Map<String, dynamic>.from(node['props']);
-
-        effectiveNode['props'] = {...templateProps, ...newProps};
-      }
-
-      // Append Children (Fixed: Explicit casting to List)
-      if (node['children'] != null) {
-        final List<dynamic> templateChildren = effectiveNode['children'] != null
-            ? List.from(effectiveNode['children'])
-            : [];
-
-        final List<dynamic> newChildren = List.from(node['children']);
-
-        effectiveNode['children'] = [...templateChildren, ...newChildren];
-      }
+    // 🪟 FLUENT RENDERER
+    if (mode == 'fluent') {
+      return FluentRenderer.build(node, engine.send);
     }
 
-    final Widget child = _buildCore(context, effectiveNode);
-
-    // Inspector Overlay
-    if (inspectMode) {
-      return MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () {
-            engine.inspectedNode = effectiveNode;
-            engine.log("Inspecting ${effectiveNode['type']}", type: "DEV");
-            // Force devtools update is tricky without state, but engine logs update
-          },
-          child: Container(
-            decoration: BoxDecoration(
-                border: Border.all(color: Colors.blueAccent, width: 2)),
-            child: child,
-          ),
-        ),
-      );
+    // 🍎 CUPERTINO RENDERER
+    else if (mode == 'cupertino') {
+      return CupertinoRenderer.build(node, engine.send);
     }
-    return child;
-  }
 
-  Widget _buildCore(BuildContext context, Map<String, dynamic> node) {
-    try {
-      final type = node['type'];
-      final props = node['props'] ?? {};
-      final childrenData = node['children'] as List? ?? [];
-
-      final children = childrenData
-          .map((c) => UniversalRenderer(node: c, inspectMode: inspectMode))
-          .toList();
-
-      final engine = EngineProvider.of(context);
-
-      Widget w;
-
-      switch (type) {
-        // --- LAYOUTS ---
-        case 'row':
-          w = Row(
-            mainAxisAlignment: _Utils.mainAlign(props['align']),
-            crossAxisAlignment: _Utils.crossAlign(props['cross_align']),
-            children: children,
-          );
-          break;
-        case 'column':
-          w = Column(
-            mainAxisAlignment: _Utils.mainAlign(props['align']),
-            crossAxisAlignment: _Utils.crossAlign(props['cross_align']),
-            children: children,
-          );
-          break;
-        case 'stack':
-          w = Stack(
-            alignment: _Utils.align(props['align']) ?? Alignment.topLeft,
-            children: children,
-          );
-          break;
-        case 'listview':
-          w = ListView(
-            padding: _Utils.padding(props['padding']),
-            scrollDirection: props['direction'] == 'horizontal'
-                ? Axis.horizontal
-                : Axis.vertical,
-            children: children,
-          );
-          break;
-        case 'grid':
-          w = GridView.count(
-            crossAxisCount: props['cols'] ?? 2,
-            childAspectRatio: (props['ratio'] ?? 1.0).toDouble(),
-            padding: _Utils.padding(props['padding']),
-            shrinkWrap: props['shrink'] == true,
-            children: children,
-          );
-          break;
-
-        // --- BASICS ---
-        case 'text':
-          w = Text(
-            props['value']?.toString() ?? '',
-            style: _Utils.textStyle(props),
-            textAlign: _Utils.textAlign(props['align']),
-            maxLines: props['max_lines'],
-            overflow: props['max_lines'] != null ? TextOverflow.ellipsis : null,
-          );
-          break;
-        case 'icon':
-          w = Icon(
-            _Utils.parseIcon(props['icon']),
-            size: props['size']?.toDouble() ?? 24,
-            color: _Utils.parseColor(props['color']),
-          );
-          break;
-        case 'image':
-          final src = props['src']?.toString() ?? '';
-          final fit = _Utils.boxFit(props['fit']);
-          if (src.startsWith('data:image')) {
-            // Base64 Image
-            final base64String = src.split(',').last;
-            w = Image.memory(base64Decode(base64String), fit: fit);
-          } else if (src.endsWith('.svg')) {
-            w = SvgPicture.network(src,
-                fit: fit,
-                placeholderBuilder: (_) => const CircularProgressIndicator());
-          } else {
-            w = CachedNetworkImage(
-                imageUrl: src,
-                fit: fit,
-                errorWidget: (_, __, ___) => const Icon(Icons.broken_image));
-          }
-          break;
-
-        // --- MEDIA & ANIMATION (BATTERIES INCLUDED) ---
-        case 'lottie':
-          final src = props['src']?.toString() ?? '';
-          if (src.startsWith('http')) {
-            w = Lottie.network(src,
-                width: props['width']?.toDouble(),
-                height: props['height']?.toDouble());
-          } else {
-            // Assume asset or local, fallback to error
-            w = const Icon(Icons.movie_creation_outlined);
-          }
-          break;
-
-        case 'video':
-          // Simplistic Video Player placeholder (Requires stateful wrapper in reality)
-          // For the purpose of "Universal Renderer", we usually need a specialized Stateful Widget registry
-          // Here we return a placeholder to avoid crashes
-          w = Container(
-            color: Colors.black,
-            alignment: Alignment.center,
-            child: const Icon(Icons.play_circle_fill,
-                color: Colors.white, size: 50),
-          );
-          break;
-
-        // --- INTERACTIVE ---
-        case 'button':
-        case 'ElevatedButton':
-          w = ElevatedButton(
-            onPressed: () => _emit(engine, node['id'], 'click'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _Utils.parseColor(props['bg_color']),
-              foregroundColor: _Utils.parseColor(props['color']),
-              elevation: props['elevation']?.toDouble(),
-              padding: _Utils.padding(props['padding']),
-              shape: _Utils.shape(props['shape']),
-            ),
-            child: children.isNotEmpty
-                ? children.first
-                : Text(props['text'] ?? 'Button'),
-          );
-          break;
-
-        case 'input':
-          w = TextField(
-            controller: TextEditingController(
-                text: props[
-                    'value']), // Note: This resets on rebuild. In prod, needs separate state map.
-            decoration: InputDecoration(
-              labelText: props['label'],
-              hintText: props['placeholder'],
-              filled: true,
-              fillColor: _Utils.parseColor(props['bg_color']),
-              border: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(props['radius']?.toDouble() ?? 4)),
-              prefixIcon: props['icon'] != null
-                  ? Icon(_Utils.parseIcon(props['icon']))
-                  : null,
-            ),
-            obscureText: props['password'] == true,
-            onChanged: (v) => _emit(engine, node['id'], 'change', val: v),
-            onSubmitted: (v) => _emit(engine, node['id'], 'submit', val: v),
-          );
-          break;
-
-        case 'switch':
-          w = Switch(
-            value: props['value'] == true,
-            activeColor: _Utils.parseColor(props['active_color']),
-            onChanged: (v) => _emit(engine, node['id'], 'change', val: v),
-          );
-          break;
-
-        // --- THE UNIVERSAL BOX (DIV) ---
-        case 'container':
-        case 'box':
-        default:
-          w = Container(
-            width: props['width']?.toDouble(),
-            height: props['height']?.toDouble(),
-            margin: _Utils.padding(props['margin']),
-            padding: _Utils.padding(props['padding']),
-            alignment: _Utils.align(props['alignment']),
-            decoration: BoxDecoration(
-              color: _Utils.parseColor(props['bg_color']),
-              image: props['bg_image'] != null
-                  ? DecorationImage(
-                      image: NetworkImage(props['bg_image']), fit: BoxFit.cover)
-                  : null,
-              borderRadius:
-                  BorderRadius.circular(props['radius']?.toDouble() ?? 0),
-              border: props['border_color'] != null
-                  ? Border.all(
-                      color: _Utils.parseColor(props['border_color'])!,
-                      width: props['border_width']?.toDouble() ?? 1)
-                  : null,
-              gradient: _Utils.gradient(props['gradient']),
-              boxShadow: props['shadow'] == true
-                  ? [
-                      BoxShadow(
-                          color: (props['shadow_color'] != null
-                              ? _Utils.parseColor(props['shadow_color'])
-                              : Colors.black26)!,
-                          blurRadius: props['blur']?.toDouble() ?? 10,
-                          offset: const Offset(0, 4))
-                    ]
-                  : null,
-            ),
-            child: children.isNotEmpty ? children.first : null,
-          );
-      }
-
-      // --- COMMON MODIFIERS ---
-      if (props['expanded'] == true || props['flex'] != null) {
-        w = Expanded(flex: props['flex'] ?? 1, child: w);
-      }
-      if (props.containsKey('click')) {
-        w = GestureDetector(
-            onTap: () => _emit(engine, node['id'], 'click'), child: w);
-      }
-      if (props['opacity'] != null) {
-        w = Opacity(opacity: props['opacity'].toDouble(), child: w);
-      }
-      if (props['rotate'] != null) {
-        w = Transform.rotate(
-            angle: props['rotate'].toDouble() * (pi / 180), child: w);
-      }
-      if (props['visible'] == false) {
-        w = const SizedBox();
-      }
-
-      return w;
-    } catch (e) {
-      return Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(border: Border.all(color: Colors.red)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 16),
-            Text("${node['type']}",
-                style:
-                    const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      );
+    // 🤖 MATERIAL RENDERER (Default)
+    else {
+      return MaterialRenderer.build(node, engine.send);
     }
-  }
-
-  void _emit(Engine engine, String? id, String evt, {dynamic val}) {
-    if (id != null) engine.send(id, evt, val);
   }
 }
 
 // =============================================================================
-// 8. DEVTOOLS OVERLAY (HACKER MODE)
+// 6. DEVTOOLS OVERLAY (ADVANCED)
 // =============================================================================
 
-class DevToolsOverlay extends StatelessWidget {
+class DevToolsOverlay extends StatefulWidget {
   final Engine engine;
-  final bool inspectMode;
-  final VoidCallback onToggleInspect;
   final VoidCallback onClose;
-
   const DevToolsOverlay(
-      {super.key,
-      required this.engine,
-      required this.inspectMode,
-      required this.onToggleInspect,
-      required this.onClose});
+      {super.key, required this.engine, required this.onClose});
+
+  @override
+  State<DevToolsOverlay> createState() => _DevToolsOverlayState();
+}
+
+class _DevToolsOverlayState extends State<DevToolsOverlay>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final TextEditingController _cmdCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Material TabController works because we aliased fluent
+    _tabController = TabController(length: 3, vsync: this);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -887,80 +520,70 @@ class DevToolsOverlay extends StatelessWidget {
       color: Colors.transparent,
       child: Stack(
         children: [
-          // Dismiss area
           GestureDetector(
-              onTap: onClose, child: Container(color: Colors.black12)),
-
-          // Console
+              onTap: widget.onClose, child: Container(color: Colors.black54)),
           Align(
             alignment: Alignment.bottomCenter,
             child: Container(
-              height: 350,
+              height: 400,
               decoration: const BoxDecoration(
                 color: Color(0xFF1E1E1E),
                 border:
                     Border(top: BorderSide(color: Colors.blueAccent, width: 2)),
-                boxShadow: [BoxShadow(color: Colors.black, blurRadius: 20)],
               ),
               child: Column(
                 children: [
-                  // Toolbar
+                  // HEADER
                   Container(
-                    color: Colors.black26,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    color: Colors.black,
                     child: Row(
                       children: [
-                        const Text("IPYUI KERNEL",
+                        const SizedBox(width: 10),
+                        const Text("🛠️ IPYUI DEVTOOLS",
                             style: TextStyle(
                                 color: Colors.blueAccent,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'monospace')),
+                                fontWeight: FontWeight.bold)),
                         const SizedBox(width: 20),
-                        _ToolIcon(
-                            Icons.find_in_page,
-                            inspectMode ? "INSPECTING" : "INSPECT",
-                            onToggleInspect,
-                            active: inspectMode),
-                        const Spacer(),
-                        _ToolIcon(Icons.close, "CLOSE", onClose),
-                      ],
-                    ),
-                  ),
-
-                  // Content Area
-                  Expanded(
-                    child: Row(
-                      children: [
-                        // Logs
-                        Expanded(flex: 2, child: _LogList(logs: engine.logs)),
-                        Container(width: 1, color: Colors.white10),
-                        // Inspector
                         Expanded(
-                            flex: 1,
-                            child: _Inspector(node: engine.inspectedNode)),
+                          // Using Material TabBar
+                          child: TabBar(
+                            controller: _tabController,
+                            isScrollable: true,
+                            labelColor: Colors.white,
+                            unselectedLabelColor: Colors.grey,
+                            indicatorColor: Colors.blueAccent,
+                            tabs: const [
+                              Tab(text: "CONSOLE & LOGS"),
+                              Tab(text: "INSPECTOR"),
+                              Tab(text: "NETWORK"),
+                            ],
+                          ),
+                        ),
+                        // Using Material IconButton
+                        IconButton(
+                            icon: const Icon(Icons.save,
+                                color: Colors.grey, size: 18),
+                            onPressed: _saveLogs,
+                            tooltip: "Save Logs"),
+                        IconButton(
+                            icon: const Icon(Icons.close,
+                                color: Colors.white, size: 18),
+                            onPressed: widget.onClose),
                       ],
                     ),
                   ),
 
-                  // CLI
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    color: Colors.black,
-                    child: TextField(
-                      style: const TextStyle(
-                          color: Colors.white, fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        prefixText: ">>> ",
-                        prefixStyle: TextStyle(color: Colors.blueAccent),
-                      ),
-                      onSubmitted: (v) {
-                        engine.send("devtools", "exec", v);
-                        engine.log("EXEC: $v", type: "CLI");
-                      },
+                  // BODY
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildConsole(),
+                        _buildInspector(),
+                        _buildNetwork(),
+                      ],
                     ),
-                  )
+                  ),
                 ],
               ),
             ),
@@ -969,70 +592,74 @@ class DevToolsOverlay extends StatelessWidget {
       ),
     );
   }
-}
 
-class _ToolIcon extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool active;
-  const _ToolIcon(this.icon, this.label, this.onTap, {this.active = false});
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-            color: active ? Colors.blueAccent : Colors.transparent,
-            borderRadius: BorderRadius.circular(4)),
-        child: Row(children: [
-          Icon(icon, size: 14, color: Colors.white),
-          const SizedBox(width: 4),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 10))
-        ]),
-      ),
+  // --- TAB 1: CONSOLE ---
+  Widget _buildConsole() {
+    return Column(
+      children: [
+        Expanded(
+          child: StreamBuilder<List<LogEntry>>(
+            stream: Logger.instance.stream,
+            initialData: Logger.instance.logs,
+            builder: (context, snapshot) {
+              final logs = snapshot.data ?? [];
+              return ListView.builder(
+                padding: const EdgeInsets.all(8),
+                itemCount: logs.length,
+                reverse: true,
+                itemBuilder: (c, i) {
+                  final log = logs[logs.length - 1 - i];
+                  return Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                            text: "[${log.timeString}] ",
+                            style: const TextStyle(color: Colors.grey)),
+                        TextSpan(
+                            text: log.message,
+                            style: TextStyle(color: log.color)),
+                      ],
+                    ),
+                    style:
+                        const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          color: Colors.black45,
+          child: TextField(
+            controller: _cmdCtrl,
+            style:
+                const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+                border: InputBorder.none,
+                prefixText: ">>> ",
+                prefixStyle: TextStyle(color: Colors.green),
+                hintText: "Enter command (help, debug, theme...)",
+                hintStyle: TextStyle(color: Colors.white24)),
+            onSubmitted: _runCommand,
+          ),
+        )
+      ],
     );
   }
-}
 
-class _LogList extends StatelessWidget {
-  final List<String> logs;
-  const _LogList({required this.logs});
-  @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      reverse: true,
-      padding: const EdgeInsets.all(8),
-      itemCount: logs.length,
-      itemBuilder: (c, i) => Text(logs[logs.length - 1 - i],
-          style: const TextStyle(
-              color: Colors.white70, fontFamily: 'monospace', fontSize: 11)),
-    );
-  }
-}
-
-class _Inspector extends StatelessWidget {
-  final Map<String, dynamic>? node;
-  const _Inspector({this.node});
-  @override
-  Widget build(BuildContext context) {
-    if (node == null)
+  // --- TAB 2: INSPECTOR ---
+  Widget _buildInspector() {
+    final root = widget.engine.rootNode;
+    if (root == null)
       return const Center(
-          child:
-              Text("Select an element", style: TextStyle(color: Colors.grey)));
+          child: Text("No UI Loaded", style: TextStyle(color: Colors.grey)));
 
-    // Pretty print JSON
     const encoder = JsonEncoder.withIndent('  ');
-    String pretty = "";
-    try {
-      pretty = encoder.convert(node);
-    } catch (e) {
-      pretty = "Error parsing node";
-    }
+    final pretty = encoder.convert(root);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(10),
       child: Text(pretty,
           style: const TextStyle(
               color: Colors.orangeAccent,
@@ -1040,170 +667,78 @@ class _Inspector extends StatelessWidget {
               fontSize: 11)),
     );
   }
-}
 
-// =============================================================================
-// 9. UTILS & PARSERS (THE TRANSLATOR)
-// =============================================================================
-
-class _Utils {
-  static Color? parseColor(dynamic val) {
-    if (val is String) {
-      if (val.startsWith('#'))
-        return Color(
-            int.parse(val.replaceAll('#', ''), radix: 16) + 0xFF000000);
-      const m = {
-        'white': Colors.white,
-        'black': Colors.black,
-        'blue': Colors.blue,
-        'red': Colors.red,
-        'green': Colors.green,
-        'transparent': Colors.transparent,
-        'grey': Colors.grey
-      };
-      return m[val];
-    }
-    return null;
-  }
-
-  static EdgeInsets padding(dynamic v) {
-    if (v is List && v.length == 4)
-      return EdgeInsets.fromLTRB(
-          v[0].toDouble(), v[1].toDouble(), v[2].toDouble(), v[3].toDouble());
-    if (v is num) return EdgeInsets.all(v.toDouble());
-    if (v is List && v.length == 2)
-      return EdgeInsets.symmetric(
-          horizontal: v[0].toDouble(), vertical: v[1].toDouble());
-    return EdgeInsets.zero;
-  }
-
-  static TextStyle textStyle(Map p) {
-    return GoogleFonts.getFont(
-      p['font'] ?? 'Roboto',
-      fontSize: p['size']?.toDouble() ?? 14,
-      color: parseColor(p['color']),
-      fontWeight: p['bold'] == true ? FontWeight.bold : FontWeight.normal,
-      fontStyle: p['italic'] == true ? FontStyle.italic : FontStyle.normal,
-      decoration: p['underline'] == true
-          ? TextDecoration.underline
-          : TextDecoration.none,
+  // --- TAB 3: NETWORK ---
+  Widget _buildNetwork() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(widget.engine.isConnected ? Icons.check_circle : Icons.error,
+              color: widget.engine.isConnected ? Colors.green : Colors.red,
+              size: 40),
+          const SizedBox(height: 10),
+          Text(widget.engine.isConnected ? "CONNECTED" : "DISCONNECTED",
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
+          const Text("ws://localhost:8000/ws",
+              style: TextStyle(color: Colors.grey)),
+        ],
+      ),
     );
   }
 
-  static MainAxisAlignment mainAlign(String? v) {
-    if (v == 'center') return MainAxisAlignment.center;
-    if (v == 'space_between') return MainAxisAlignment.spaceBetween;
-    if (v == 'end') return MainAxisAlignment.end;
-    return MainAxisAlignment.start;
-  }
+  // --- CLI LOGIC ---
+  void _runCommand(String cmd) {
+    _cmdCtrl.clear();
+    Logger.instance.add("CMD: $cmd", LogType.cli);
 
-  static CrossAxisAlignment crossAlign(String? v) {
-    if (v == 'center') return CrossAxisAlignment.center;
-    if (v == 'stretch') return CrossAxisAlignment.stretch;
-    if (v == 'end') return CrossAxisAlignment.end;
-    return CrossAxisAlignment.start;
-  }
+    final parts = cmd.split(' ');
+    final action = parts[0].toLowerCase();
 
-  static Alignment? align(String? v) {
-    if (v == 'center') return Alignment.center;
-    if (v == 'top_left') return Alignment.topLeft;
-    if (v == 'bottom_right') return Alignment.bottomRight;
-    if (v == 'center_left') return Alignment.centerLeft;
-    if (v == 'center_right') return Alignment.centerRight;
-    return null;
-  }
-
-  static BoxFit boxFit(String? v) {
-    if (v == 'contain') return BoxFit.contain;
-    if (v == 'fill') return BoxFit.fill;
-    return BoxFit.cover;
-  }
-
-  static TextAlign textAlign(String? v) {
-    if (v == 'center') return TextAlign.center;
-    if (v == 'right') return TextAlign.right;
-    if (v == 'justify') return TextAlign.justify;
-    return TextAlign.left;
-  }
-
-  static IconData parseIcon(String? n) {
-    switch (n) {
-      case 'home':
-        return Icons.home;
-      case 'settings':
-        return Icons.settings;
-      case 'person':
-        return Icons.person;
-      case 'add':
-        return Icons.add;
-      case 'check':
-        return Icons.check_circle;
-      case 'close':
-        return Icons.close;
-      case 'camera':
-        return Icons.camera_alt;
-      case 'map':
-        return Icons.map;
-      case 'menu':
-        return Icons.menu;
-      case 'search':
-        return Icons.search;
-      case 'edit':
-        return Icons.edit;
-      case 'delete':
-        return Icons.delete;
-      case 'info':
-        return Icons.info;
-      case 'warning':
-        return Icons.warning;
-      case 'error':
-        return Icons.error;
+    switch (action) {
+      case 'help':
+        Logger.instance.add(
+            "Commands: help, clear, theme [light|dark], titlebar [native|custom], get ui",
+            LogType.info);
+        break;
+      case 'clear':
+        Logger.instance.clear();
+        break;
+      case 'theme':
+        if (parts.length > 1) {
+          if (parts[1] == 'dark')
+            DartP.instance.execute("Theme.dark()");
+          else
+            DartP.instance.execute("Theme.light()");
+        }
+        break;
+      case 'get':
+        if (parts.length > 1 && parts[1] == 'ui') {
+          _tabController.animateTo(1);
+        }
+        break;
       default:
-        return Icons.widgets;
+        Logger.instance.add("Unknown command. Try 'help'.", LogType.error);
     }
   }
 
-  static OutlinedBorder? shape(dynamic val) {
-    if (val is Map) {
-      if (val['type'] == 'RoundedRectangleBorder') {
-        return RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(val['radius']?.toDouble() ?? 0));
-      }
-      if (val['type'] == 'CircleBorder') return const CircleBorder();
-      if (val['type'] == 'StadiumBorder') return const StadiumBorder();
+  void _saveLogs() async {
+    final content = Logger.instance.export();
+    String? path = await FilePicker.platform
+        .saveFile(dialogTitle: "Save Logs", fileName: "ipyui_logs.txt");
+    if (path != null) {
+      final file = File(path);
+      await file.writeAsString(content);
+      Logger.instance.add("Logs saved to $path", LogType.system);
     }
-    return null;
-  }
-
-  static Gradient? gradient(dynamic val) {
-    if (val is Map && val['colors'] is List) {
-      return LinearGradient(
-        colors: (val['colors'] as List).map((c) => parseColor(c)!).toList(),
-        begin: align(val['begin']) ?? Alignment.centerLeft,
-        end: align(val['end']) ?? Alignment.centerRight,
-      );
-    }
-    return null;
   }
 }
 
 class ConnectionScreen extends StatelessWidget {
   const ConnectionScreen({super.key});
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.wifi_tethering, size: 60, color: Colors.blueGrey),
-          const SizedBox(height: 20),
-          const Text("Connecting to Kernel...",
-              style: TextStyle(fontSize: 18, color: Colors.grey)),
-          const SizedBox(height: 20),
-          const SizedBox(width: 150, child: LinearProgressIndicator()),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      const Center(child: CircularProgressIndicator());
 }
