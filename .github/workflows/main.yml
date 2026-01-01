@@ -1,0 +1,59 @@
+name: Windows2 Build
+
+# Kod main branchga tushganda yoki qo'lda bosilganda ishlaydi
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows Exe
+    runs-on: windows-latest
+
+    steps:
+      # 1. Kodni Githubdan yuklab olish
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Flutter muhitini o'rnatish
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+
+      # 3. Keshni yoqish (Buildni tezlashtirish uchun)
+      - name: Pub Cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.PUB_CACHE }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      # 4. Windows Config (Desktop supportni yoqish)
+      - name: Enable Windows Support
+        run: flutter config --enable-windows-desktop
+
+      # 5. Dependency'larni yuklash
+      - name: Get Dependencies
+        run: flutter pub get
+
+      # --- MUHIM QISM: Windows papkasini yaratish ---
+      # Bu buyruq sizda yo'q bo'lgan 'windows' papkasini
+      # va C++ runner fayllarini avtomatik generatsiya qiladi.
+      - name: Create Windows Files
+        run: flutter create --platforms=windows .
+      # ----------------------------------------------
+
+      # 6. Build jarayoni (Release versiya)
+      - name: Build Windows App
+        run: flutter build windows --release
+
+      # 7. Tayyor fayllarni zip qilib olish (Artifact)
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: IpyUI-Windows-App
+          path: build/windows/x64/runner/Release
