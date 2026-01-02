@@ -1,8 +1,7 @@
 // =============================================================================
 // FILE: lib/connection.dart
-// PROJECT: IPYUI QUANTUM RUNTIME
-// MODULE: HIGH-PERFORMANCE TRANSPORT LAYER
-// FEATURES: Binary Streams, Cookie/Cache Persistence, Auto-Reconnection, Offline Mode
+// SYSTEM: IPYUI QUANTUM CONNECTION (STABLE VERSION)
+// DESC: Handles WebSocket, Caching, and Binary Streams with Auto-Reconnect
 // =============================================================================
 
 import 'dart:async';
@@ -16,156 +15,157 @@ import 'package:web_socket_channel/status.dart' as status;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-// INTERNAL LINKS
+// MODULE LINKS
 import 'kernel.dart';
-import 'devtools.dart';
-import 'utils.dart';
+import 'utils.dart'; // Logger uchun
+import 'devtools.dart'; // Network monitor uchun
 
 // =============================================================================
-// 1. CACHE & STORAGE MANAGER (Browser-like Cookies)
+// 1. STORAGE MANAGER (CACHE & COOKIES)
 // =============================================================================
 
 class StorageManager {
   static final StorageManager instance = StorageManager._internal();
   StorageManager._internal();
 
-  late SharedPreferences _prefs;
-  bool _ready = false;
+  SharedPreferences? _prefs;
 
+  /// Tizimni yuklash
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    _ready = true;
-    Logger.instance.add("Storage Manager Initialized", LogType.system);
+    Logger.instance.add("Storage Initialized", LogType.system);
   }
 
-  // --- COOKIES (Session / Auth) ---
-  Future<void> setCookie(String key, String value) async {
-    await _prefs.setString('cookie_$key', value);
-  }
-
-  String? getCookie(String key) {
-    return _prefs.getString('cookie_$key');
-  }
-
-  Map<String, String> getAllCookies() {
-    final keys = _prefs.getKeys();
-    final cookies = <String, String>{};
-    for (var k in keys) {
-      if (k.startsWith('cookie_')) {
-        cookies[k.substring(7)] = _prefs.getString(k) ?? "";
-      }
-    }
-    return cookies;
-  }
-
-  // --- UI CACHING (Instant Load) ---
+  // --- UI CACHING (OFFLINE MODE) ---
+  
   Future<void> cacheUI(Map<String, dynamic> uiTree) async {
-    // UI ni siqilgan holda saqlaymiz
-    final raw = jsonEncode(uiTree);
-    await _prefs.setString('cached_ui_tree', raw);
+    if (_prefs == null) return;
+    try {
+      final raw = jsonEncode(uiTree);
+      await _prefs!.setString('cached_ui_tree', raw);
+      // Logger.instance.add("UI Cached", LogType.system);
+    } catch (e) {
+      print("Cache Save Error: $e");
+    }
   }
 
   Map<String, dynamic>? loadCachedUI() {
-    final raw = _prefs.getString('cached_ui_tree');
-    if (raw != null) {
+    if (_prefs == null) return null;
+    final raw = _prefs!.getString('cached_ui_tree');
+    if (raw != null && raw.isNotEmpty) {
       try {
         return jsonDecode(raw);
       } catch (e) {
-        Logger.instance.add("Cache Corrupted: $e", LogType.error);
+        print("Cache Corrupted");
       }
     }
     return null;
   }
 
-  Future<void> clearCache() async {
-    await _prefs.remove('cached_ui_tree');
+  // --- COOKIES (SESSION) ---
+  
+  Future<void> setCookie(String key, String value) async {
+    await _prefs?.setString('cookie_$key', value);
+  }
+
+  Map<String, String> getAllCookies() {
+    if (_prefs == null) return {};
+    final keys = _prefs!.getKeys();
+    final cookies = <String, String>{};
+    for (var k in keys) {
+      if (k.startsWith('cookie_')) {
+        cookies[k.substring(7)] = _prefs!.getString(k) ?? "";
+      }
+    }
+    return cookies;
   }
 }
 
 // =============================================================================
-// 2. CONNECTION MANAGER (The Binary Highway)
+// 2. CONNECTION MANAGER (WEBSOCKET ENGINE)
 // =============================================================================
 
 class ConnectionManager {
   static final ConnectionManager instance = ConnectionManager._internal();
   ConnectionManager._internal();
 
-  // Configuration
+  // Config
   static const String _defaultUrl = "ws://localhost:8000/ws";
-  static const Duration _pingInterval = Duration(seconds: 30);
-
+  
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
-  bool _isConnecting = false;
   String _activeUrl = _defaultUrl;
+  bool _isConnecting = false;
 
-  // Status
-  bool get isConnected => IpyKernel.instance.isConnected;
-
-  // ===========================================================================
-  // LIFECYCLE
-  // ===========================================================================
-
+  /// 1. Tizimni ishga tushirish (Main.dart chaqiradi)
   Future<void> initialize() async {
-    // 1. Storage ni yuklaymiz
+    // A. Xotirani yuklash
     await StorageManager.instance.init();
 
-    // 2. Keshdagi UI ni darhol ko'rsatamiz (Offline First)
+    // B. Keshdagi UIni yuklash (Internetni kutmasdan)
     final cachedUI = StorageManager.instance.loadCachedUI();
     if (cachedUI != null) {
-      Logger.instance
-          .add("Loaded UI from Local Cache (Instant)", LogType.system);
+      Logger.instance.add("UI Loaded from Cache (Offline Mode)", LogType.system);
+      // Kernelga beramiz, u UI ni chizadi
       IpyKernel.instance.processManualUI(cachedUI);
+    } else {
+      Logger.instance.add("No Cache Found", LogType.info);
     }
 
-    // 3. Tarmoqni kuzatish
-    Connectivity().onConnectivityChanged.listen((result) {
-      if (result != ConnectivityResult.none && !isConnected) {
+    // C. Internetni kuzatish
+    Connectivity().onConnectivityChanged.listen((results) {
+      // Yangi versiyada List<ConnectivityResult> qaytadi
+      final hasNet = results.any((r) => r != ConnectivityResult.none);
+      if (hasNet && !IpyKernel.instance.isConnected) {
+        Logger.instance.add("Network Detected. Reconnecting...", LogType.network);
         connect(_activeUrl);
       }
     });
   }
 
+  /// 2. Serverga Ulanish
   void connect(String url) {
-    if (_isConnecting || isConnected) return;
-    _isConnecting = true;
+    if (IpyKernel.instance.isConnected || _isConnecting) return;
+    
     _activeUrl = url;
+    _isConnecting = true;
+    _reconnectTimer?.cancel();
 
-    Logger.instance.add("Dialing Kernel: $url", LogType.network);
+    Logger.instance.add("Dialing $url...", LogType.network);
 
     try {
-      // Cookiesni headerga qo'shamiz
-      // Eslatma: Dart WebSocket ba'zi platformalarda headerlarni cheklaydi,
-      // shuning uchun biz 'Handshake' paketini yuboramiz.
-
+      // WebSocket yaratish
       _channel = WebSocketChannel.connect(Uri.parse(url));
 
+      // Tinglashni boshlash
       _channel!.stream.listen(
         (message) => _onData(message),
-        onDone: _onDisconnect,
+        onDone: () {
+          _handleDisconnect("Server Closed Connection");
+        },
         onError: (error) {
-          Logger.instance.add("Socket Error: $error", LogType.error);
-          _onDisconnect();
+          _handleDisconnect("Socket Error: $error");
         },
       );
 
       // Muvaffaqiyatli ulanish
       _handleConnected();
+
     } catch (e) {
-      Logger.instance.add("Fatal Connection Error: $e", LogType.error);
-      _onDisconnect();
+      _handleDisconnect("Fatal Init Error: $e");
     }
   }
 
+  /// Ulanganda bajariladigan ishlar
   void _handleConnected() {
     _isConnecting = false;
     IpyKernel.instance.isConnected = true;
-    IpyKernel.instance.forceNotify(); // UI ga "Online" deb bildirish
+    IpyKernel.instance.forceNotify(); // UI ga "Men ulandim!" deb aytadi
+    
+    Logger.instance.add("✅ Connection Established", LogType.network);
 
-    Logger.instance.add("Tunnel Established 🟢", LogType.network);
-
-    // Handshake: Cookies va Device Info yuborish
+    // Handshake (Salomlashish)
     final cookies = StorageManager.instance.getAllCookies();
     final handshake = {
       "type": "system",
@@ -175,94 +175,102 @@ class ConnectionManager {
     };
     sendJson(handshake);
 
-    // Heartbeatni boshlash
+    // Ping (Har 30 soniyada)
     _startHeartbeat();
   }
 
-  void _onDisconnect() {
+  /// Uzilganda bajariladigan ishlar
+  void _handleDisconnect(String reason) {
+    if (!_isConnecting && !IpyKernel.instance.isConnected) return; // Allaqachon uzilgan
+
     _isConnecting = false;
     IpyKernel.instance.isConnected = false;
-    IpyKernel.instance.forceNotify(); // UI ga "Offline" deb bildirish
-
+    IpyKernel.instance.forceNotify(); // UI ga "Uzildim" deb aytadi
+    
     _stopHeartbeat();
     _channel = null;
 
-    // Reconnect Logic (Exponential Backoff o'rniga oddiy 3 soniya)
-    Logger.instance.add("Link Lost 🔴. Retrying in 3s...", LogType.network);
-    _reconnectTimer?.cancel();
-    _reconnectTimer =
-        Timer(const Duration(seconds: 3), () => connect(_activeUrl));
+    Logger.instance.add("🔴 Disconnected: $reason", LogType.network);
+    print("Reconnect scheduled in 3s...");
+
+    // 3 soniyadan keyin qayta urinish
+    _reconnectTimer = Timer(const Duration(seconds: 3), () => connect(_activeUrl));
   }
 
   // ===========================================================================
-  // DATA HANDLING (The Fast Lane)
+  // DATA PROCESSOR
   // ===========================================================================
 
   void _onData(dynamic message) {
     try {
-      // BINARY (Images, Files, Audio)
+      // 1. BINARY (Tezkor)
       if (message is List<int>) {
         final bytes = Uint8List.fromList(message);
         IpyKernel.instance.processIncoming(bytes);
+        DevToolsManager.instance.addPacket('IN', 'BINARY', 'Binary Stream', bytes.length);
         return;
       }
 
-      // TEXT (JSON)
+      // 2. TEXT (JSON)
       if (message is String) {
-        // Avtomatik Keshlashtirish (Faqat to'liq update kelsa)
-        // Biz buni Kernelga yuboramiz, u hal qiladi, lekin bu yerda JSON ekanligini bilamiz.
-        if (message.contains('"type":"update"')) {
-          // Oddiy check, chuqur parse qilmaslik uchun (Performance)
-          // Asl parsing Kernelda bo'ladi.
-          StorageManager.instance.cacheUI(jsonDecode(message)['tree']);
-        }
+        // DevTools uchun
+        DevToolsManager.instance.addPacket('IN', 'JSON', message, message.length);
 
+        // Avtomatik Kesh (Agar Update bo'lsa)
+        if (message.contains('"type":"update"')) {
+           try {
+             final data = jsonDecode(message);
+             if (data['tree'] != null) {
+               StorageManager.instance.cacheUI(data['tree']);
+             }
+           } catch (_) {}
+        }
+        
+        // Kernelga uzatish
         IpyKernel.instance.processIncoming(message);
       }
     } catch (e) {
-      Logger.instance.add("Packet Corrupted: $e", LogType.error);
+      Logger.instance.add("Parse Error: $e", LogType.error);
     }
   }
 
   // ===========================================================================
-  // SENDING METHODS
+  // SENDERS
   // ===========================================================================
 
-  /// Standard JSON yuborish (UI events)
   void sendJson(Map<String, dynamic> data) {
     if (_channel == null) return;
     try {
       final jsonStr = jsonEncode(data);
       _channel!.sink.add(jsonStr);
-      // DevTools da faqat chiquvchi trafikni ko'rsatish (juda ko'p bo'lmasligi uchun filter)
-      if (data['type'] != 'ping') {
+      
+      // Pingdan boshqasini log qilamiz
+      if (data['type'] != 'system') {
         DevToolsManager.instance.addPacket('OUT', 'JSON', data, jsonStr.length);
       }
     } catch (e) {
-      Logger.instance.add("Send Failed: $e", LogType.error);
+      Logger.instance.add("Send Error: $e", LogType.error);
     }
   }
 
-  /// Binary yuborish (Kamera, Fayl, Ovoz)
   void sendBinary(Uint8List data) {
     if (_channel == null) return;
     try {
       _channel!.sink.add(data);
-      DevToolsManager.instance
-          .addPacket('OUT', 'BINARY', 'Raw Bytes', data.length);
+      DevToolsManager.instance.addPacket('OUT', 'BINARY', 'Raw Bytes', data.length);
     } catch (e) {
-      Logger.instance.add("Binary Send Failed: $e", LogType.error);
+      Logger.instance.add("Bin Send Error: $e", LogType.error);
     }
   }
 
   // ===========================================================================
-  // UTILS
+  // HEARTBEAT (PING/PONG)
   // ===========================================================================
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(_pingInterval, (timer) {
-      if (isConnected) {
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (IpyKernel.instance.isConnected) {
         sendJson({"type": "system", "event": "ping"});
       }
     });
@@ -270,11 +278,5 @@ class ConnectionManager {
 
   void _stopHeartbeat() {
     _heartbeatTimer?.cancel();
-  }
-
-  void close() {
-    _stopHeartbeat();
-    _reconnectTimer?.cancel();
-    _channel?.sink.close(status.goingAway);
   }
 }
