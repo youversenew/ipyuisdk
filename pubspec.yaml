@@ -38,6 +38,9 @@ dependencies:
   connectivity_plus: ^7.0.0
   flutter_local_notifications: ^19.5.0
   permission_handler: ^12.0.1
+  http: ^1.2.0
+  path_provider: ^2.1.2
+  crypto: ^3.0.3 # Versiyani tekshirish (hash) uchun
   
 
 dev_dependencies:

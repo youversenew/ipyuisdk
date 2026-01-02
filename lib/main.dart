@@ -1,8 +1,8 @@
 // =============================================================================
 // FILE: lib/main.dart
-// SYSTEM: IPYUI QUANTUM CLIENT (MAIN ENTRY)
-// VERSION: 10.0.0-MASTER
-// INTEGRATION: Kernel, Connection, DevTools, Universal Renderers
+// SYSTEM: IPYUI QUANTUM CLIENT (MAIN INTEGRATION)
+// VERSION: 12.0.0-CONNECTED
+// DESC: Connects Kernel, Connection, DevTools, and Renderers into one App.
 // =============================================================================
 
 import 'dart:async';
@@ -14,7 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/cupertino.dart';
 
-// --- UI SYSTEMS (Fluent aliased) ---
+// --- UI SYSTEMS (Aliased) ---
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 
 // --- PACKAGES ---
@@ -22,12 +22,12 @@ import 'package:window_manager/window_manager.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lottie/lottie.dart';
 
-// --- INTERNAL MODULES ---
-import 'utils.dart';
-import 'kernel.dart';
-import 'connection.dart';
-import 'devtools.dart';
-import 'performance.dart';
+// --- INTERNAL MODULES (BIZ YOZGAN FAYLLAR) ---
+import 'utils.dart'; // Parserlar
+import 'kernel.dart'; // Orqa fon, Hardware, State
+import 'connection.dart'; // WebSocket, Cache, Binary
+import 'devtools.dart'; // F12, Inspector, Console
+import 'performance.dart'; // Diffing, Lazy Loading
 
 // --- RENDERERS ---
 import 'renderers/material_renderer.dart';
@@ -35,11 +35,11 @@ import 'renderers/cupertino_renderer.dart';
 import 'renderers/fluent_renderer.dart';
 
 // =============================================================================
-// 1. BOOTSTRAP (ISHGA TUSHIRISH)
+// 1. BOOTSTRAP (TIZIMNI YUKLASH)
 // =============================================================================
 
 void main() async {
-  // Crash Guard: Ilova qulamasligi uchun himoya
+  // Crash Guard: Ilova qulamasligi uchun global himoya
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
@@ -53,7 +53,8 @@ void main() async {
         center: true,
         backgroundColor: Colors.transparent,
         skipTaskbar: false,
-        titleBarStyle: TitleBarStyle.hidden, // Custom Titlebar ishlatamiz
+        // Standart holatda Tizim Ramkasi (Native)
+        titleBarStyle: TitleBarStyle.normal,
       );
 
       await windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -62,17 +63,22 @@ void main() async {
       });
     }
 
-    // 2. Tizim Kerneli va Aloqani ishga tushirish
+    // 2. KERNELNI ISHGA TUSHIRISH (Hardware & State)
     await IpyKernel.instance.boot();
-    await ConnectionManager.instance.initialize(); // Cache yuklanadi
 
-    // 3. Serverga Ulanish (Agar avtomatik ulanmasa)
+    // 3. ALOQANI ISHGA TUSHIRISH (Cache & Network)
+    // Bu yerda Cache dagi eski UI yuklanadi (Offline Mode)
+    await ConnectionManager.instance.initialize();
+
+    // 4. SERVERGA ULANISH
+    // Agar kesh bo'sh bo'lsa yoki yangilanish kerak bo'lsa
     if (!IpyKernel.instance.isConnected) {
       ConnectionManager.instance.connect("ws://localhost:8000/ws");
     }
 
     runApp(const IpyRoot());
   }, (error, stack) {
+    // Xatolikni DevTools logiga va Konsolga yozamiz
     Logger.instance.add("FATAL CRASH: $error", LogType.error);
     debugPrint("🔥 KERNEL PANIC: $error");
   });
@@ -87,11 +93,12 @@ class IpyRoot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Kernel o'zgarishlarini tinglaymiz (Real-time Config Update)
+    // IpyKernel o'zgarishlarini tinglaymiz (Config, Theme, UI Mode)
     return AnimatedBuilder(
       animation: IpyKernel.instance,
       builder: (context, _) {
         final config = IpyKernel.instance.config;
+
         final String mode = config['ui_mode'] ?? 'material';
         final Color seedColor =
             Utils.parseColor(config['seed_color']) ?? Colors.blue;
@@ -111,7 +118,7 @@ class IpyRoot extends StatelessWidget {
           });
 
           return fluent.FluentApp(
-            title: config['title'] ?? 'IPYUI Fluent',
+            title: config['title'] ?? 'IPYUI Client',
             debugShowCheckedModeBanner: false,
             themeMode: themeMode == ThemeMode.dark
                 ? fluent.ThemeMode.dark
@@ -135,7 +142,7 @@ class IpyRoot extends StatelessWidget {
         // 🍎 2. CUPERTINO (iOS Style)
         if (mode == 'cupertino') {
           return CupertinoApp(
-            title: config['title'] ?? 'IPYUI iOS',
+            title: config['title'] ?? 'IPYUI Client',
             debugShowCheckedModeBanner: false,
             theme: CupertinoThemeData(
               brightness: themeMode == ThemeMode.dark
@@ -152,7 +159,7 @@ class IpyRoot extends StatelessWidget {
 
         // 🤖 3. MATERIAL (Default / Android)
         return MaterialApp(
-          title: config['title'] ?? 'IPYUI App',
+          title: config['title'] ?? 'IPYUI Client',
           debugShowCheckedModeBanner: false,
           themeMode: themeMode,
           theme: _buildMaterialTheme(Brightness.light, seedColor, fontName),
@@ -179,7 +186,7 @@ class IpyRoot extends StatelessWidget {
 }
 
 // =============================================================================
-// 3. APP SHELL (DEVTOOLS & WINDOW FRAME)
+// 3. APP SHELL (DEVTOOLS, KEYBOARD & LAYOUT)
 // =============================================================================
 
 class IpyShell extends StatefulWidget {
@@ -196,10 +203,13 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
     super.initState();
     windowManager.addListener(this);
 
-    // DevToolsni DartP orqali boshqarish uchun ulash
-    DartP.instance.toggleDevTools = () {
-      DevToolsManager.instance.toggle();
-    };
+    // DartP (Script) orqali DevToolsni ochish/yopish imkoniyati
+    // Bu Kernelga contextni bog'lashdan oldin kerak
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // IpyKernelga Contextni beramiz (Dialoglar chiqishi uchun)
+      // IpyKernel.instance.setContext(context); // Agar kernelda bu metod bo'lsa
+      // Hozirda Kernel global contextni ishlatmaydi, lekin biz DevToolsOverlay ni ishga tushirishimiz kerak.
+    });
   }
 
   @override
@@ -211,7 +221,7 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    // F12 Bosilganda DevTools ochilishi uchun Listener
+    // 1. F12 ni tinglash uchun Listener
     return RawKeyboardListener(
       focusNode: _keyboardNode,
       autofocus: true,
@@ -220,17 +230,16 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
           DevToolsManager.instance.toggle();
         }
       },
-      // DEVTOOLS OVERLAY: Butun ilovani o'rab oladi
+      // 2. DEVTOOLS OVERLAY (Bizning `devtools.dart` dagi widget)
+      // Bu butun ilovani o'rab turadi va F12 bosilganda ustidan chiqadi
       child: DevToolsOverlay(
         child: AnimatedBuilder(
           animation: IpyKernel.instance,
           builder: (context, _) {
-            // Scaffold turi UI Mode ga qarab o'zgarishi mumkin, lekin
-            // biz Universal Renderer ichida boshqarganimiz ma'qul.
-            // Bu yerda umumiy oyna ramkasini chizamiz.
-
             final config = IpyKernel.instance.config;
-            final bool isNativeBar = config['title_bar'] == 'native';
+            final bool isNativeBar = config['title_bar'] != 'custom';
+
+            // Background rangi (Theme ga qarab)
             final Color bg = Theme.of(context).scaffoldBackgroundColor;
 
             return Scaffold(
@@ -239,13 +248,13 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
                 children: [
                   Column(
                     children: [
-                      // 1. Custom Title Bar (Agar native bo'lmasa)
+                      // 3. CUSTOM TITLE BAR (Agar configda 'custom' bo'lsa)
                       if (!isNativeBar) _buildCustomTitleBar(context),
 
-                      // 2. Main Content (Renderer)
+                      // 4. MAIN CONTENT AREA
                       Expanded(
+                        // Performance Boundary (Tezlik uchun)
                         child: RepaintBoundary(
-                          // Performance uchun chegara
                           child: IpyKernel.instance.uiTree != null
                               ? UniversalBridge(
                                   node: IpyKernel.instance.uiTree!,
@@ -276,7 +285,7 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
         child: Row(
           children: [
             const SizedBox(width: 15),
-            // Ikonka
+            // Ikonka (URL yoki Asset)
             if (config['icon'] != null)
               Image.network(config['icon'], width: 16, height: 16)
             else
@@ -293,11 +302,11 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
             ),
             const Spacer(),
 
-            // Oyna Tugmalari (Windows/Linux uchun)
+            // Oyna Tugmalari (Windows/Linux)
             if (!Platform.isMacOS) ...[
-              _WindowBtn(Icons.remove, windowManager.minimize),
-              _WindowBtn(Icons.crop_square, windowManager.maximize),
-              _WindowBtn(Icons.close, windowManager.close, isDanger: true),
+              _WinBtn(Icons.remove, windowManager.minimize),
+              _WinBtn(Icons.check_box_outline_blank, windowManager.maximize),
+              _WinBtn(Icons.close, windowManager.close, isDanger: true),
             ]
           ],
         ),
@@ -306,11 +315,11 @@ class _IpyShellState extends State<IpyShell> with WindowListener {
   }
 }
 
-class _WindowBtn extends StatelessWidget {
+class _WinBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback cb;
   final bool isDanger;
-  const _WindowBtn(this.icon, this.cb, {this.isDanger = false});
+  const _WinBtn(this.icon, this.cb, {this.isDanger = false});
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -327,7 +336,7 @@ class _WindowBtn extends StatelessWidget {
 }
 
 // =============================================================================
-// 4. UNIVERSAL BRIDGE (RENDERER ROUTER)
+// 4. UNIVERSAL BRIDGE (RENDERER ROUTER & LAZY LOADING)
 // =============================================================================
 
 class UniversalBridge extends StatelessWidget {
@@ -338,13 +347,15 @@ class UniversalBridge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // --- LAZY LOADING CHECK ---
-    // Agar widget "Lazy List" bo'lsa, Scroll hodisasini ushlaymiz
-    if (node['type'] == 'listview' && node['props']?['lazy'] == true) {
+    // --- LAZY LOADING DETECTOR ---
+    // Agar "ListView" bo'lsa va "lazy: true" bo'lsa, scrollni kuzatamiz
+    if ((node['type'] == 'listview' || node['type'] == 'ListView') &&
+        node['props']?['lazy'] == true) {
       return NotificationListener<ScrollNotification>(
         onNotification: (notification) {
+          // PerformanceManager (`performance.dart`) orqali tekshirish
           if (PerformanceManager.instance.shouldLoadMore(notification)) {
-            // Python'ga signal: "Men oxiriga keldim, yana ma'lumot ber!"
+            // Kernel orqali Pythonga signal: "Yana ma'lumot yubor!"
             IpyKernel.instance.send(node['id'], 'scroll_end', null);
           }
           return false;
@@ -357,7 +368,7 @@ class UniversalBridge extends StatelessWidget {
   }
 
   Widget _routeRenderer() {
-    // Kernelga to'g'ridan-to'g'ri bog'langan Event Sender
+    // Kernelning 'send' funksiyasini rendererlarga uzatamiz
     final sender = IpyKernel.instance.send;
 
     if (mode == 'fluent') {
@@ -371,15 +382,13 @@ class UniversalBridge extends StatelessWidget {
 }
 
 // =============================================================================
-// 5. CONNECTION SCREEN (LOADING)
+// 5. CONNECTION SCREEN (LOADING & RETRY)
 // =============================================================================
 
 class ConnectionScreen extends StatelessWidget {
   const ConnectionScreen({super.key});
   @override
   Widget build(BuildContext context) {
-    // Agar Keshda eski UI bo'lsa, uni ko'rsatishimiz mumkin edi (Kernel ichida hal qilingan)
-    // Bu ekran faqat Kesh bo'sh bo'lsa va Internet yo'q bo'lsa chiqadi.
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -391,13 +400,20 @@ class ConnectionScreen extends StatelessWidget {
             errorBuilder: (c, e, s) => const CircularProgressIndicator(),
           ),
           const SizedBox(height: 20),
-          const Text("Connecting to Kernel...",
-              style: TextStyle(color: Colors.grey, fontSize: 16)),
+          const Text("IPYUI QUANTUM ENGINE",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
           const SizedBox(height: 10),
-          TextButton(
-              onPressed: () =>
-                  ConnectionManager.instance.connect("ws://localhost:8000/ws"),
-              child: const Text("Retry Connection"))
+          const Text("Connecting to Kernel...",
+              style: TextStyle(color: Colors.grey)),
+          const SizedBox(height: 20),
+
+          // Qo'lda qayta ulanish tugmasi
+          TextButton.icon(
+            icon: const Icon(Icons.refresh),
+            label: const Text("Retry Connection"),
+            onPressed: () =>
+                ConnectionManager.instance.connect("ws://localhost:8000/ws"),
+          )
         ],
       ),
     );
